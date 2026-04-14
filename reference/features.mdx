@@ -1,0 +1,119 @@
+---
+title: "src/features.py: CDR Indices and Sequence Features"
+description: "Extract CDR residue indices, CDR3 length, amino acid composition, and V-gene family from VH sequences using the IMGT numbering scheme via abnumber."
+---
+
+The `features` module provides utilities for characterising VH sequences at the residue level. It uses the [abnumber](https://github.com/prihoda/abnumber) library to apply the IMGT numbering scheme, from which it extracts CDR1/2/3 residue positions, CDR3 length, and 20-dimensional amino acid composition vectors. A lightweight regex extracts the V-gene family prefix from IMGT gene call strings. These features are consumed by the `embed` module (CDR indices) and by the analysis notebooks (composition and V-gene family).
+
+## `cdr_indices`
+
+```python
+def cdr_indices(vh: str) -> list[int]:
+```
+
+Returns the 0-indexed positions of all CDR1, CDR2, and CDR3 residues in `vh`
+according to the IMGT numbering scheme.
+
+### Parameters
+
+<ParamField path="vh" type="str" required>
+  VH amino acid sequence to parse. The sequence should be ungapped and contain
+  only the 20 standard amino acids.
+</ParamField>
+
+### Returns
+
+`list[int]` — 0-indexed positions of CDR residues. Returns an empty list `[]`
+if abnumber cannot parse the sequence.
+
+<Note>
+  When you pass these indices to `get_cdr_embeddings` in `embed.py`, the
+  function adds `+1` to each index to compensate for the ESM2 BOS token.
+  AntiBERTy embeddings use the indices directly without any offset.
+</Note>
+
+---
+
+## `cdr3_length`
+
+```python
+def cdr3_length(vh: str) -> int:
+```
+
+Returns the number of residues in CDR3.
+
+### Parameters
+
+<ParamField path="vh" type="str" required>
+  VH amino acid sequence.
+</ParamField>
+
+### Returns
+
+`int` — CDR3 residue count. Returns `0` if abnumber fails to parse the sequence.
+
+---
+
+## `aa_composition`
+
+```python
+def aa_composition(vh: str) -> np.ndarray:
+```
+
+Computes the relative frequency of each of the 20 standard amino acids in `vh`.
+
+### Parameters
+
+<ParamField path="vh" type="str" required>
+  VH amino acid sequence.
+</ParamField>
+
+### Returns
+
+`np.ndarray` of shape `(20,)`, dtype `float64`. Element `i` is the fraction of
+residues in `vh` that equal amino acid `i` in the fixed order
+`ACDEFGHIKLMNPQRSTVWY`. Values sum to 1.0 (assuming all characters are in the
+standard alphabet).
+
+---
+
+## `vgene_family`
+
+```python
+def vgene_family(v_gene: str) -> str:
+```
+
+Extracts the V-gene family prefix from a full IMGT gene call string.
+
+### Parameters
+
+<ParamField path="v_gene" type="str" required>
+  IMGT V-gene call string, e.g. `"IGHV1-3*01"`.
+</ParamField>
+
+### Returns
+
+`str` — The family prefix matched by `IGHV\d+`, e.g. `"IGHV1"`. Returns
+`"unknown"` if the string is empty or does not match the expected pattern.
+
+---
+
+## Usage example
+
+```python
+from src.features import cdr_indices, cdr3_length, vgene_family
+
+seq = "EVQLVESGGGLVQPGGSLRLSCAASGFTFSSYAMSWVRQAPGKGLEWVSAISGSGGSTYYADSVKGRFTISRDNSKNTLYLQMNSLRAEDTAVYYCAR"
+idx = cdr_indices(seq)
+length = cdr3_length(seq)
+family = vgene_family("IGHV1-3*01")
+print(f"CDR indices: {idx[:5]}... ({len(idx)} total)")
+print(f"CDR3 length: {length}")
+print(f"V-gene family: {family}")
+```
+
+<Warning>
+  HMMER must be installed (available via bioconda) for abnumber to parse
+  sequences correctly. Without HMMER, `cdr_indices` and `cdr3_length` will
+  return empty lists and `0` respectively for most inputs.
+</Warning>

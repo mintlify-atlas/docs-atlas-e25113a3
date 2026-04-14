@@ -1,0 +1,90 @@
+---
+title: "How Protein Language Models Embed VH Antibody Sequences"
+description: "How ESM2 and AntiBERTy generate fixed-length vectors from VH sequences, and how CLS token, full-mean, and CDR-only pooling strategies differ."
+---
+
+Protein language models (PLMs) are transformer-based neural networks pre-trained on large corpora of protein sequences. Like language models trained on text, they learn to predict masked residues from context, and in doing so they build internal representations that reflect evolutionary and structural patterns in protein sequences. Those representations — vectors extracted from the model's hidden states — are what this analysis calls *embeddings*. For antibody analysis, PLM embeddings offer a way to map variable-length amino acid sequences into a fixed-size geometric space where distances and clustering carry biological meaning.
+
+## ESM2: general-purpose language model
+
+ESM2 (`facebook/esm2_t6_8M_UR50D`) is a general-purpose protein language model developed by Meta Research. It was pre-trained on the UniRef50 database, covering a broad sweep of protein families, and is not specific to antibodies or immunoglobulins. The 8M-parameter variant used here was chosen due to CPU memory constraints (approximately 8 GB RAM); larger ESM2 variants were not evaluated and may encode different structure.
+
+ESM2 follows BERT-style tokenization: the tokenizer prepends a beginning-of-sequence (BOS) token to each sequence. This means that when you extract hidden states from `last_hidden_state`, position 0 corresponds to the BOS token rather than the first residue. All ESM2 pooling operations in this analysis apply a `+1` offset to account for this.
+
+## AntiBERTy: antibody-specific language model
+
+AntiBERTy (Ruffolo et al. 2021) was trained specifically on paired heavy/light chain antibody sequences from OAS. Its tokenizer does not insert BOS or EOS tokens, so hidden state indices map directly to residue positions with no offset required. Because AntiBERTy's training data includes OAS paired sequences — the same source as this analysis — its embeddings reflect in-distribution performance.
+
+<Tip>
+AntiBERTy was trained on OAS paired data, the same source as this panel. Silhouette scores for AntiBERTy reflect in-distribution performance, not generalization to an unseen corpus.
+</Tip>
+
+## Three pooling strategies
+
+Both models produce a hidden state matrix of shape `(sequence_length, hidden_dim)` — one vector per residue. To obtain a single fixed-length embedding for downstream analysis, you need to pool across the sequence dimension. This analysis evaluates three pooling strategies:
+
+### CLS token
+
+The CLS token strategy extracts the hidden state at position 0 of the ESM2 output, which corresponds to the BOS token inserted by the tokenizer. In BERT-style models, the CLS token is intended to aggregate sequence-level information through self-attention. In practice, whether this aggregation is meaningful for antibody clustering is an empirical question — and the results here show it produces near-zero species silhouette (0.000).
+
+### Full-sequence mean-pool
+
+Full-sequence mean-pooling averages the hidden states across all residue positions. For ESM2, this means averaging positions `1` through `L` (skipping position 0, the BOS token). For AntiBERTy, positions `0` through `L-1` are averaged directly. This strategy makes no assumptions about which positions are informative and treats all residues equally.
+
+### CDR-only mean-pool
+
+CDR-only mean-pooling restricts the mean to positions that fall within IMGT CDR1, CDR2, and CDR3. The CDR indices for each sequence are extracted using `abnumber`, which applies IMGT numbering via HMMER alignment. For ESM2, each CDR index is shifted by `+1` to account for the BOS offset before indexing into the hidden states. For AntiBERTy, indices are used directly.
+
+```python
+from src.features import cdr_indices
+
+# Returns a list of 0-based residue indices that fall in CDR1, CDR2, or CDR3
+idx = cdr_indices("EVQLVESGGGLVQPGGSLRLSCAASGFTFSSYWMSWVRQAPGKGLEWVSNIKQDGSEKYYVDSVKGRFTISRDNAKNSLYLQMNSLRAEDTAVYYCAR")
+```
+
+<Info>
+CDR indices are extracted using IMGT numbering via `abnumber`, which requires HMMER to be installed. If you install `abnumber` via pip without HMMER present, it will fail silently at runtime. Use the provided `environment.yml` (which installs `hmmer=3.4` via bioconda) to avoid this.
+</Info>
+
+## Why the analysis focuses on VH
+
+Only VH sequences are embedded, even though the dataset includes paired VH/VL pairs. VH encodes all three CDRs (CDR1, CDR2, and CDR3). CDR3 in particular is formed entirely by VH recombination — V, D, and J gene segments join with junctional diversity to produce the hypervariable loop that is the primary determinant of binding specificity. It also carries the bulk of inter-species diversity signal. VL was fetched but is not analyzed here.
+
+## Cosine silhouette as the evaluation metric
+
+Silhouette score measures how well-separated clusters are in the embedding space. For each data point, it computes the ratio of within-cluster cohesion to between-cluster separation. A score near `+1` means the point is well inside its own cluster; near `0` means it sits on the boundary; negative means it is closer to a different cluster.
+
+This analysis uses **cosine silhouette** — the silhouette is computed with the cosine distance metric rather than Euclidean. This is appropriate for high-dimensional embedding spaces where the magnitude of vectors is less informative than their direction. All silhouette scores reported are computed in embedding space, not on UMAP coordinates.
+
+```python
+from sklearn.metrics import silhouette_score
+import numpy as np
+
+# emb: (n_sequences, hidden_dim) float32 array
+# labels: species labels, e.g. ["human", "mouse", ...]
+score = silhouette_score(emb, labels, metric="cosine")
+```
+
+## UMAP as visualization only
+
+UMAP (Uniform Manifold Approximation and Projection) projects high-dimensional embeddings into 2D for visual inspection. However, UMAP is a non-linear dimensionality reduction that distorts distances, so visual cluster separation in a UMAP plot does not reliably reflect cluster separation in the original embedding space. All quantitative claims in this analysis use cosine silhouette in embedding space. UMAP figures are used solely for illustration.
+
+## Loading embeddings from cache
+
+Once computed, embeddings are saved as numpy `.npy` files. You can load any of the five caches directly without re-running the model:
+
+```python
+import numpy as np
+
+# ESM2 embeddings
+emb_cls      = np.load("embeddings_cache.npy")          # CLS token
+emb_fullmean = np.load("embeddings_fullmean_cache.npy") # Full-seq mean-pool
+emb_cdr      = np.load("embeddings_cdr_cache.npy")      # CDR-only mean-pool
+
+# AntiBERTy embeddings
+ab_fullmean  = np.load("ab_embeddings_fullmean_cache.npy") # Full-seq mean-pool
+ab_cdr       = np.load("ab_embeddings_cdr_cache.npy")      # CDR-only mean-pool
+
+# Each array is shape (750, hidden_dim), dtype float32
+print(emb_cls.shape)   # (750, 320) for ESM2-8M
+```

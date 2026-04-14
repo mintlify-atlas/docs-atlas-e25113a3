@@ -1,0 +1,71 @@
+---
+title: "Dataset: 750 OAS VH Sequences Across Human, Mouse, Rat"
+description: "750 OAS paired sequences (250 per species) used in this analysis: how they are fetched, their schema, and how human, mouse, and rat repertoires differ."
+---
+
+The dataset consists of 750 paired heavy/light chain antibody sequences drawn from the Observed Antibody Space (OAS) database — 250 sequences per species across human, mouse, and rat. OAS aggregates B-cell repertoire sequencing data from published studies, applying consistent annotation (V/J gene calls, CDR identification) and quality filtering. The paired subset used here contains sequences where both the VH and VL chains were sequenced from the same cell, which is a requirement of several downstream analyses. Only the VH chain is embedded in this project.
+
+## Dataset summary
+
+| Property | Value |
+|---|---|
+| Total sequences | 750 |
+| Sequences per species | 250 |
+| Species | human, mouse, rat |
+| Source | OAS paired subset |
+| Chain embedded | VH (heavy chain) |
+| VL chain | fetched, not analyzed |
+
+## How data is fetched
+
+Sequences are loaded by `fetch_paired_sequences()` in `src/data.py`. On first call, the function parses OAS bulk download URLs from `bulk_download.sh`, streams each gzip-compressed unit file, checks its species metadata, validates that both VH and VL sequences consist only of standard amino acids, and accumulates up to 250 sequences per species. Results are written to `data/sequences.csv` and loaded from cache on all subsequent calls.
+
+```python
+def fetch_paired_sequences(
+    n: int = 750,
+    species: tuple = ("human", "mouse", "rat"),
+) -> pd.DataFrame:
+    ...
+```
+
+**Parameters:**
+
+- `n` — total number of sequences to collect; divided equally across `species`
+- `species` — tuple of species names to include; each must match OAS metadata case-insensitively
+
+The function returns a `pd.DataFrame` with the following columns:
+
+| Column | Description |
+|---|---|
+| `sequence_id` | OAS sequence identifier from the heavy chain |
+| `sequence_vh` | VH amino acid sequence (standard alphabet only) |
+| `sequence_vl` | VL amino acid sequence (standard alphabet only) |
+| `v_gene` | V gene call for the heavy chain (e.g., `IGHV1-69*01`) |
+| `j_gene` | J gene call for the heavy chain (e.g., `IGHJ4*02`) |
+| `species` | Species label: `human`, `mouse`, or `rat` |
+
+<Note>
+Sequences are included in `data/sequences.csv` — no network access is required to run the notebooks. Delete the file to re-fetch live from OAS.
+</Note>
+
+## Why only VH is embedded
+
+VH encodes all three CDRs. CDR3 is formed by V, D, and J gene segment recombination and carries the bulk of inter-species diversity signal — it is the primary determinant of binding specificity. VL CDRs are shallower contributors to antigen contact in most antibody classes. Embedding only VH keeps the analysis focused on the most biologically informative chain while reducing compute.
+
+## Biological differences across species
+
+Human, mouse, and rat antibodies differ systematically across several dimensions:
+
+**Germline gene usage.** The IGHV family distributions are near-non-overlapping across species. Human uses families IGHV1 through IGHV7; mouse has its own IGHV1–IGHV14 repertoire; rat overlaps partially with mouse but has distinct family usage patterns. A V-gene silhouette control in the analysis confirms that these distributional differences alone do not drive the observed species separation: V-gene silhouette is negative in all ESM2 conditions and only +0.033 for AntiBERTy full-mean, well below the species silhouette of 0.323.
+
+**CDR length distributions.** CDR3 length varies by species. Mouse sequences in particular can produce very short CDR3 loops (~5–6 amino acids) via direct V-J joining without D-segment, a mechanism less common in human repertoires. The CLS UMAP shows an isolated orange cluster of these short-CDR3 mouse sequences — their unusual bulk amino acid composition is distinctive enough for ESM2 to separate them even when overall species silhouette is zero.
+
+**Framework residue composition.** Framework regions (FR1–FR4) differ in residue composition across species, reflecting different germline gene sequences. Under AntiBERTy, CDR masking slightly *hurts* species separation (−0.012, CI excludes zero), which indicates that framework positions carry inter-species signal under antibody-specific pre-training — a finding not seen with ESM2.
+
+## Sample limitations
+
+<Warning>
+250 sequences per species is a small panel. The sample is not stratified by donor, isotype, or disease state. Detected species signal may conflate true species-level biology with repertoire sampling differences across OAS studies.
+</Warning>
+
+The OAS paired subset draws from a limited number of published studies, and coverage is uneven across species. Mouse and rat data are drawn from a smaller pool of donors than human. Results should be interpreted as a methodological comparison of embedding conditions rather than a comprehensive characterization of species repertoires.

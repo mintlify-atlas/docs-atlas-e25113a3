@@ -1,97 +1,40 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Antibody Sequence Landscape: VH Embedding Analysis"
+description: "Analyze VH antibody diversity across human, mouse, and rat using ESM2 and AntiBERTy PLM embeddings with paired bootstrap confidence intervals."
 ---
 
-## Setting up
+Antibody Sequence Landscape is a reproducible research analysis that measures how well protein language model (PLM) embeddings capture species-level structure in VH antibody sequences. It embeds 750 sequences (250 each from human, mouse, and rat) under five conditions spanning two models — ESM2 and AntiBERTy — and three pooling strategies, then quantifies species separation using cosine silhouette with paired bootstrap confidence intervals.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Learn what this analysis does, why it matters, and what the key findings are.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Setup" icon="wrench" href="/setup">
+    Install dependencies and pre-compute embedding caches before running the notebooks.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Embedding Conditions" icon="layer-group" href="/concepts/embedding-conditions">
+    Understand the five conditions: CLS token, full-mean, and CDR-only across ESM2 and AntiBERTy.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Results" icon="chart-bar" href="/analysis/results">
+    Explore the silhouette scores, bootstrap confidence intervals, and pairwise contrasts.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Key findings
 
-Everything you need to create world-class documentation.
+AntiBERTy substantially outperforms ESM2-8M at encoding inter-species structure in VH sequences. For ESM2, switching from the CLS token to full-sequence mean-pooling recovers +0.056 silhouette points — but CDR masking adds nothing on top. AntiBERTy reverses this: framework positions carry inter-species signal under antibody-specific pretraining, and CDR masking slightly hurts performance.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={2}>
+  <Card title="Statistical methods" icon="flask" href="/analysis/statistical-methods">
+    Paired bootstrap, permutation tests, and dual bootstrap for V-gene control.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Data and species" icon="dna" href="/concepts/data-and-species">
+    750 OAS paired sequences, species composition, and V-gene family distributions.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="Code reference" icon="code" href="/reference/data">
+    Module-level documentation for src/data.py, embed.py, features.py, and stats.py.
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="Running the analysis" icon="play" href="/analysis/running-the-analysis">
+    Step-by-step guide to reproducing the full analysis from cache to notebooks.
   </Card>
-</Columns>
-
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+</CardGroup>

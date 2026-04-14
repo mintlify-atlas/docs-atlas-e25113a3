@@ -1,0 +1,123 @@
+---
+title: "Set Up the Environment and Pre-Compute Embeddings"
+description: "Install the conda environment, pre-compute ESM2 and AntiBERTy embedding caches, and run the two Jupyter notebooks in the correct order."
+---
+
+This page walks you through everything you need to run the Antibody Sequence Landscape analysis from a fresh checkout. You will create a pinned conda environment that includes HMMER and all Python dependencies, pre-compute five `.npy` embedding cache files, and then run the two notebooks in order. The entire setup takes a single terminal session.
+
+## Requirements
+
+Before you start, make sure you have:
+
+- **Python 3.12** — the environment pins `python=3.12.3`
+- **conda** — used to create the environment and install HMMER from bioconda
+- **HMMER 3.4** — installed by conda from the bioconda channel; must be present before pip dependencies are installed
+
+You do not need a GPU. ESM2 runs on CPU by default. A GPU speeds things up for larger sequence sets but is not required for this 750-sequence panel.
+
+## Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the repository and change into the project directory:
+
+    ```bash
+    git clone https://github.com/sputhenofficial/antibody-sequence-landscape.git
+    cd antibody-sequence-landscape
+    ```
+  </Step>
+
+  <Step title="Create the conda environment">
+    Create the environment from the pinned `environment.yml` file and activate it:
+
+    ```bash
+    conda env create -f environment.yml && conda activate antibody
+    ```
+
+    <Note>
+      HMMER must be present on `PATH` before `abnumber` is imported at runtime. The `environment.yml` installs HMMER 3.4 from bioconda before any pip packages, so the conda path handles this correctly. Do not install pip dependencies into a separate environment without first ensuring HMMER is available — `abnumber` installs without its required binary and fails silently at runtime.
+    </Note>
+  </Step>
+
+  <Step title="Pre-compute ESM2 embedding caches">
+    Run the following command from the repository root to generate all three ESM2 cache files in a single model-load pass:
+
+    ```bash
+    python3 -c "
+    import numpy as np
+    from src.data import fetch_paired_sequences
+    from src.features import cdr_indices
+    from src.embed import precompute_esm2
+
+    df = fetch_paired_sequences(n=750, species=('human', 'mouse', 'rat'))
+    cdr_idx = [cdr_indices(s) for s in df['sequence_vh']]
+
+    emb_cls, emb_fm, emb_cdr = precompute_esm2(df['sequence_vh'].tolist(), cdr_idx, batch_size=16)
+    np.save('embeddings_cache.npy', emb_cls)
+    np.save('embeddings_fullmean_cache.npy', emb_fm)
+    np.save('embeddings_cdr_cache.npy', emb_cdr)
+    "
+    ```
+
+    This writes three files to the repository root: `embeddings_cache.npy` (CLS), `embeddings_fullmean_cache.npy` (full-sequence mean-pool), and `embeddings_cdr_cache.npy` (CDR-only mean-pool).
+  </Step>
+
+  <Step title="Pre-compute AntiBERTy embedding caches">
+    Run the following command to generate the two AntiBERTy cache files:
+
+    ```bash
+    python3 -c "
+    import numpy as np
+    from src.data import fetch_paired_sequences
+    from src.features import cdr_indices
+    from src.embed import get_antiberty_embeddings
+
+    df = fetch_paired_sequences(n=750, species=('human', 'mouse', 'rat'))
+    cdr_idx = [cdr_indices(s) for s in df['sequence_vh']]
+
+    emb_fm = get_antiberty_embeddings(df['sequence_vh'].tolist(), batch_size=16)
+    np.save('ab_embeddings_fullmean_cache.npy', emb_fm)
+
+    emb_cdr = get_antiberty_embeddings(df['sequence_vh'].tolist(), cdr_idx, batch_size=16)
+    np.save('ab_embeddings_cdr_cache.npy', emb_cdr)
+    "
+    ```
+
+    This writes `ab_embeddings_fullmean_cache.npy` (AntiBERTy full-sequence mean-pool) and `ab_embeddings_cdr_cache.npy` (AntiBERTy CDR-only mean-pool).
+  </Step>
+
+  <Step title="Run the notebooks in order">
+    Once all five `.npy` files exist, open and run the notebooks in this order:
+
+    1. **`notebook.ipynb`** — ESM2 embeddings, UMAP projections, silhouette statistics, and bootstrap inference. This notebook also writes `embeddings_fullmean_cache.npy`, which the next notebook reads for the cross-model comparison.
+    2. **`notebook_antiberty.ipynb`** — AntiBERTy embeddings, cross-model comparison, and the pairwise contrast table.
+
+    Both notebooks detect the cache files at startup and skip recomputation if they are present.
+  </Step>
+</Steps>
+
+<Warning>
+  On machines with less than 16 GB RAM, computing embeddings inside a running notebook will crash the kernel. Always pre-compute the caches from the terminal (steps 3 and 4 above) before opening the notebooks.
+</Warning>
+
+## Sequence data and network access
+
+<Note>
+  Sequence data is included in `data/sequences.csv` — no network access is required to run the analysis. `fetch_paired_sequences()` reads from that file on every call. If you want to re-fetch live sequences from OAS, delete `data/sequences.csv` and rerun; the function will stream from OAS bulk download URLs and recreate the file.
+</Note>
+
+## Embedding cache files
+
+<Info>
+  After completing setup, you will have five `.npy` cache files in the repository root:
+
+  | File | Condition | Used by |
+  |---|---|---|
+  | `embeddings_cache.npy` | ESM2 CLS token | `notebook.ipynb` |
+  | `embeddings_fullmean_cache.npy` | ESM2 full-sequence mean-pool | `notebook.ipynb`, `notebook_antiberty.ipynb` |
+  | `embeddings_cdr_cache.npy` | ESM2 CDR-only mean-pool | `notebook.ipynb` |
+  | `ab_embeddings_fullmean_cache.npy` | AntiBERTy full-sequence mean-pool | `notebook_antiberty.ipynb` |
+  | `ab_embeddings_cdr_cache.npy` | AntiBERTy CDR-only mean-pool | `notebook_antiberty.ipynb` |
+
+  Delete all five files to force a full recomputation from scratch.
+</Info>

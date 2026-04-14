@@ -1,0 +1,116 @@
+---
+title: "Statistical Methods: Bootstrap and Permutation Tests"
+description: "Paired bootstrap, permutation test, and dual bootstrap for cosine silhouette CIs across all five embedding conditions. Includes the full src/stats.py source."
+---
+
+All quantitative claims in this analysis are grounded in **paired bootstrap** confidence intervals computed in embedding space. Silhouette is calculated with the cosine metric directly on the high-dimensional embeddings — not on UMAP coordinates, which are used for visualization only. Three functions in `src/stats.py` implement the full statistical framework: `paired_bootstrap`, `permutation_test`, and `dual_bootstrap`.
+
+## Cosine silhouette
+
+Silhouette score measures how well each point fits its own cluster relative to the nearest other cluster. For a sequence $i$ with species label $c$, it is defined as $(b_i - a_i) / \max(a_i, b_i)$, where $a_i$ is the mean intra-species distance and $b_i$ is the mean distance to the nearest other species. The overall score is the mean across all sequences.
+
+The cosine metric is used instead of Euclidean because language model embedding vectors are high-dimensional and their magnitude carries no informative signal — cosine distance normalizes for that and measures directional similarity, which is the meaningful quantity in representation space. Silhouette ranges from −1 (sequences are closer to other species than their own) to +1 (perfect separation). A score near zero indicates that species are not separated in the embedding.
+
+All silhouette values reported in this analysis are computed in the original embedding space, not on the two-dimensional UMAP projection.
+
+## Paired bootstrap
+
+```python
+paired_bootstrap(Xs, labels, n=1000, seed=0)
+```
+
+`Xs` is a dict mapping condition names to embedding matrices (shape `[750, D]`). On each of the 1,000 resamples, a single set of row indices is drawn with replacement from `range(750)` and applied to **all** conditions simultaneously. Silhouette is then computed for each condition on the resampled subset.
+
+Using the same indices across all conditions is critical. All five embeddings are computed from the same 750 sequences, so pairwise contrasts (for example, AntiBERTy full-mean minus ESM2 full-mean) must be evaluated on the same resampled sequences to cancel out sampling noise. Applying independent indices to each condition would inflate contrast variance.
+
+`paired_bootstrap` returns a dict of arrays — one array of 1,000 silhouette values per condition. From these distributions you can read off:
+
+- **95% CI for each condition**: 2.5th and 97.5th percentiles of that condition's array
+- **95% CI for any pairwise contrast**: 2.5th and 97.5th percentiles of the difference array (e.g., `scores["antiberty_fm"] - scores["esm2_fm"]`)
+
+The CI is the correct quantity for the null hypothesis "no separation": if the 95% CI for a condition includes zero, the data are consistent with zero separation. If the CI for a contrast includes zero, the data are consistent with no difference between those two conditions.
+
+## Permutation test
+
+```python
+permutation_test(X, labels, n=1000, seed=42)
+```
+
+`permutation_test` takes a single embedding matrix `X` and the species labels, shuffles the labels uniformly at random 1,000 times, and recomputes silhouette under each shuffle. The p-value is the fraction of null-distribution samples at or above the observed silhouette.
+
+<Warning>
+  The permutation null distribution is centered slightly **below** zero, not at zero. This happens because random label permutations in a directionally structured embedding space (where different species occupy different regions) tend to produce negative silhouette values. As a result, p-values are asymmetric with bootstrap CIs: a near-zero observed silhouette can still return p&nbsp;&lt;&nbsp;0.001 because the null sits below it.
+
+  **The CI is the correct criterion for "no separation" claims.** A p-value below 0.05 does not mean species are meaningfully separated when the CI spans zero — the CLS condition illustrates this exactly (sil=0.000, CI spans zero, perm p&nbsp;&lt;&nbsp;0.001).
+</Warning>
+
+## Dual bootstrap
+
+```python
+dual_bootstrap(Xs, species_labels, vfam_mask, vfam_labels, n=1000, seed=0)
+```
+
+`dual_bootstrap` is a paired bootstrap restricted to sequences with valid V-gene family calls. On each resample, it computes silhouette twice on the same resampled subset: once with species labels and once with V-gene family labels (using only the sequences that have a parseable IGHV family call). This produces per-condition arrays of `(species_silhouette, vgene_silhouette)` pairs from the same resamples.
+
+Because the two silhouette values on each resample share the same sequence draws, the contrast `species − vgene` has tightly estimated variance. If the CI for this contrast excludes zero in every condition, species structure exceeds V-gene background structure in every bootstrap resample — which is the validation criterion used in the V-gene control.
+
+This function is used to confirm that the observed species signal is not an artifact of near-non-overlapping IGHV family distributions across human, mouse, and rat.
+
+## Full source: src/stats.py
+
+```python
+import numpy as np
+from sklearn.metrics import silhouette_score
+
+
+def permutation_test(X, labels, n=1000, seed=42):
+    rng = np.random.default_rng(seed)
+    obs = silhouette_score(X, labels, metric="cosine")
+    null = np.fromiter(
+        (silhouette_score(X, rng.permutation(labels), metric="cosine") for _ in range(n)),
+        dtype=float, count=n,
+    )
+    return obs, (null >= obs).mean()
+
+
+def paired_bootstrap(Xs, labels, n=1000, seed=0):
+    rng = np.random.default_rng(seed)
+    n_samp = len(labels)
+    scores = {k: [] for k in Xs}
+    for _ in range(n):
+        idx = rng.integers(0, n_samp, size=n_samp)
+        if len(np.unique(labels[idx])) < 2:
+            continue
+        for k, X in Xs.items():
+            scores[k].append(silhouette_score(X[idx], labels[idx], metric="cosine"))
+    return {k: np.array(v) for k, v in scores.items()}
+
+
+def dual_bootstrap(Xs, species_labels, vfam_mask, vfam_labels, n=1000, seed=0):
+    rng = np.random.default_rng(seed)
+    n_samp = len(species_labels)
+    full_vfam = np.full(n_samp, -1, dtype=vfam_labels.dtype)
+    full_vfam[vfam_mask] = vfam_labels
+    scores = {k: {"species": [], "vgene": []} for k in Xs}
+    for _ in range(n):
+        idx = rng.integers(0, n_samp, size=n_samp)
+        if len(np.unique(species_labels[idx])) < 2:
+            continue
+        vmask_idx = full_vfam[idx] >= 0
+        vfam_sub = full_vfam[idx][vmask_idx]
+        if len(np.unique(vfam_sub)) < 2:
+            continue
+        _, vfam_reenc = np.unique(vfam_sub, return_inverse=True)
+        for k, X in Xs.items():
+            scores[k]["species"].append(
+                silhouette_score(X[idx], species_labels[idx], metric="cosine")
+            )
+            scores[k]["vgene"].append(
+                silhouette_score(X[idx][vmask_idx], vfam_reenc, metric="cosine")
+            )
+    return {k: {lbl: np.array(v) for lbl, v in d.items()} for k, d in scores.items()}
+```
+
+<Note>
+  "Does the 95% CI include zero?" is the correct test for the null hypothesis of no separation or no difference. Permutation p-values answer a different question (is the observed value unusual under random labels?) and should not be used alone to interpret the masking-effect or CLS results.
+</Note>

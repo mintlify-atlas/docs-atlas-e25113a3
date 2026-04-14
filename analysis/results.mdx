@@ -1,0 +1,64 @@
+---
+title: "Results: Species Separation Across Embedding Conditions"
+description: "Silhouette scores and 95% bootstrap CIs for all five conditions, pairwise contrasts isolating pooling and model effects, and a V-gene family control."
+---
+
+AntiBERTy substantially outperforms ESM2-8M at separating human, mouse, and rat VH sequences in embedding space. For ESM2, switching from CLS token to full-sequence mean-pool produces a meaningful gain (+0.056, CI excludes zero); CDR masking on top of mean-pool adds nothing (CI spans zero). AntiBERTy achieves a cosine silhouette of 0.323 under full-sequence mean-pooling — a +0.268 advantage over ESM2 — and, unlike ESM2, encodes inter-species signal in framework positions: CDR masking slightly hurts it. A V-gene family control confirms the species signal is not an artifact of near-non-overlapping IGHV distributions across species.
+
+<Info>
+  UMAP is used for visualization only. All quantitative claims are grounded in cosine silhouette computed in embedding space.
+</Info>
+
+## Silhouette scores
+
+Cosine silhouette in embedding space (n=750, 1,000 paired bootstrap samples):
+
+| Condition | Model | Silhouette | 95% CI | perm p |
+|---|---|---:|:---:|---:|
+| CLS token | ESM2-8M | 0.000 | [−0.021, 0.021] | &lt;0.001 |
+| Full-seq mean-pool | ESM2-8M | 0.054 | [0.043, 0.073] | &lt;0.001 |
+| CDR-only mean-pool | ESM2-8M | 0.054 | [0.043, 0.071] | &lt;0.001 |
+| Full-seq mean-pool | AntiBERTy | 0.323 | [0.309, 0.340] | &lt;0.001 |
+| CDR-only mean-pool | AntiBERTy | 0.310 | [0.298, 0.327] | &lt;0.001 |
+
+## Pairwise contrasts
+
+Contrasts derived from the joint paired bootstrap (same 1,000 resamples applied to all conditions):
+
+| Contrast | Δ Silhouette | 95% CI | Conclusion |
+|---|---:|:---:|---|
+| Pooling effect — full-mean − CLS (ESM2) | +0.056 | [+0.030, +0.085] | CI excludes 0 |
+| Masking effect — CDR − full-mean (ESM2) | −0.000 | [−0.018, +0.018] | CI includes 0 |
+| Masking effect — CDR − full-mean (AntiBERTy) | −0.012 | [−0.017, −0.008] | CI excludes 0 |
+| Model effect — AntiBERTy − ESM2 full-mean | +0.268 | [+0.249, +0.286] | CI excludes 0 |
+
+## ESM2 findings
+
+The CLS token encodes no species separation. Its silhouette is 0.000 and the bootstrap CI spans zero symmetrically, confirming the null. The permutation p-value of &lt;0.001 fires because the permutation null distribution sits below zero in this embedding space — the CI is the correct criterion here, not the p-value.
+
+Switching from CLS to full-sequence mean-pool recovers +0.056 silhouette points (CI: [+0.030, +0.085], excludes zero). This is the dominant gain. CDR-only mean-pool scores identically to full-mean (0.054); the masking contrast CI of [−0.018, +0.018] spans zero, so there is no evidence that restricting to CDR positions changes anything on top of mean-pooling. The gain is entirely from the pooling strategy, not from position selection.
+
+<Note>
+  The isolated orange cluster visible at the bottom of the CLS UMAP is mouse sequences with CDR3 lengths of approximately 5–6 amino acids. These result from direct V-J joining without a D-segment, which produces an unusual bulk amino acid composition — unusual enough that ESM2 separates them even when the overall species silhouette is zero.
+</Note>
+
+## AntiBERTy findings
+
+AntiBERTy full-sequence mean-pool achieves a cosine silhouette of 0.323, outperforming the equivalent ESM2 condition by +0.268 (CI: [+0.249, +0.286], excludes zero). The separation is visually evident in the UMAP: the three species form well-defined, largely non-overlapping clusters.
+
+Unlike ESM2, CDR masking slightly *hurts* AntiBERTy: the CDR-only condition drops to 0.310 (masking contrast −0.012, CI: [−0.017, −0.008], excludes zero). This means framework positions carry inter-species signal under antibody-specific pretraining — information that is discarded when you restrict to CDR positions alone. AntiBERTy was pretrained on OAS paired antibody sequences, the same source as this panel, so its 0.323 silhouette reflects in-distribution performance.
+
+## V-gene control
+
+The near-non-overlapping IGHV family distributions across human, mouse, and rat raise an alternative explanation: that the observed species signal is driven by V-gene family usage differences rather than species-level biology per se. The `dual_bootstrap` function tests this directly by comparing species silhouette with V-gene silhouette on the same resamples.
+
+V-gene silhouette is **negative** in all ESM2 conditions (CLS: −0.254; full-mean: −0.121), meaning ESM2 embeddings do not separate sequences by V-gene family. For AntiBERTy full-mean, V-gene silhouette is +0.033. In every bootstrap resample and every condition, species silhouette exceeds V-gene silhouette — all contrast CIs exclude zero. The species signal is not explained by V-family structure.
+
+<CardGroup cols={2}>
+  <Card title="Statistical methods" icon="chart-bar" href="/analysis/statistical-methods">
+    Details on paired bootstrap, permutation test, and dual bootstrap implementation.
+  </Card>
+  <Card title="Embedding conditions" icon="layer-group" href="/concepts/embedding-conditions">
+    How CLS, full-mean, and CDR-only pooling strategies differ across ESM2 and AntiBERTy.
+  </Card>
+</CardGroup>

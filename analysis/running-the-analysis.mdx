@@ -1,0 +1,101 @@
+---
+title: "Reproduce the Antibody Sequence Landscape Analysis"
+description: "Pre-compute all five embedding caches from the terminal, then run the two notebooks in order to produce UMAP figures, silhouette scores, and bootstrap CIs."
+---
+
+Before running the notebooks, pre-compute all five embedding caches from your terminal. This avoids out-of-memory kernel crashes on machines with less than ~16 GB RAM, and lets both notebooks load instantly from disk. All quantitative outputs — UMAP figures, silhouette scores, bootstrap confidence intervals, and permutation p-values — are produced by the two notebooks once the caches are in place.
+
+<Steps>
+  <Step title="Ensure setup is complete">
+    Follow the [setup guide](/setup) to create and activate the `antibody` conda environment. HMMER must be installed before any pip packages; the conda environment handles this correctly.
+  </Step>
+
+  <Step title="Pre-compute ESM2 caches">
+    Run the following command from the project root. It loads the model once and writes all three ESM2 cache files in a single pass.
+
+    ```bash
+    python3 -c "
+    import numpy as np
+    from src.data import fetch_paired_sequences
+    from src.features import cdr_indices
+    from src.embed import precompute_esm2
+
+    df = fetch_paired_sequences(n=750, species=('human', 'mouse', 'rat'))
+    cdr_idx = [cdr_indices(s) for s in df['sequence_vh']]
+
+    emb_cls, emb_fm, emb_cdr = precompute_esm2(df['sequence_vh'].tolist(), cdr_idx, batch_size=16)
+    np.save('embeddings_cache.npy', emb_cls)
+    np.save('embeddings_fullmean_cache.npy', emb_fm)
+    np.save('embeddings_cdr_cache.npy', emb_cdr)
+    "
+    ```
+  </Step>
+
+  <Step title="Pre-compute AntiBERTy caches">
+    Run the following command to write the two AntiBERTy cache files — full-sequence mean-pool and CDR-only mean-pool.
+
+    ```bash
+    python3 -c "
+    import numpy as np
+    from src.data import fetch_paired_sequences
+    from src.features import cdr_indices
+    from src.embed import get_antiberty_embeddings
+
+    df = fetch_paired_sequences(n=750, species=('human', 'mouse', 'rat'))
+    cdr_idx = [cdr_indices(s) for s in df['sequence_vh']]
+
+    emb_fm = get_antiberty_embeddings(df['sequence_vh'].tolist(), batch_size=16)
+    np.save('ab_embeddings_fullmean_cache.npy', emb_fm)
+
+    emb_cdr = get_antiberty_embeddings(df['sequence_vh'].tolist(), cdr_idx, batch_size=16)
+    np.save('ab_embeddings_cdr_cache.npy', emb_cdr)
+    "
+    ```
+  </Step>
+
+  <Step title="Run notebook.ipynb for ESM2 analysis">
+    Open and run `notebook.ipynb`. It loads the three ESM2 cache files, computes UMAP projections, and runs the paired bootstrap and permutation tests. Outputs are written to `figures/`.
+  </Step>
+
+  <Step title="Run notebook_antiberty.ipynb for AntiBERTy and cross-model comparison">
+    Open and run `notebook_antiberty.ipynb`. It loads the two AntiBERTy cache files along with `embeddings_fullmean_cache.npy` produced by the previous notebook, then performs the cross-model comparison.
+  </Step>
+</Steps>
+
+<Warning>
+  Run `notebook.ipynb` before `notebook_antiberty.ipynb`. The AntiBERTy notebook loads `embeddings_fullmean_cache.npy` (the ESM2 full-sequence mean-pool cache) for the cross-model comparison. If you pre-computed caches using the terminal commands above, this file already exists. If you skip pre-computation and rely on the notebooks to generate caches, you must run `notebook.ipynb` first.
+</Warning>
+
+<Note>
+  Both notebooks check for the presence of cache files before computing embeddings. If all relevant `.npy` files already exist, the notebooks skip recomputation entirely and proceed directly to analysis.
+</Note>
+
+## What the notebooks produce
+
+`notebook.ipynb` produces:
+
+- UMAP figures in `figures/` for all three ESM2 conditions, colored by species, V-gene family, and CDR3 length
+- Cosine silhouette scores for each condition
+- 95% bootstrap confidence intervals from 1,000 paired resamples
+- Permutation p-values under the label-shuffle null
+
+`notebook_antiberty.ipynb` produces:
+
+- UMAP figures for both AntiBERTy conditions
+- Silhouette scores and bootstrap CIs for AntiBERTy full-mean and CDR-only
+- Pairwise contrast CIs across all five conditions (pooling effect, masking effect, model effect)
+- V-gene dual bootstrap control
+
+<Info>
+  To recompute everything from scratch, delete all five `.npy` cache files and `data/sequences.csv`. On the next run, `fetch_paired_sequences` will re-fetch sequences live from OAS, and the pre-compute commands will regenerate all embeddings.
+</Info>
+
+## Cache files
+
+| File | Contents |
+|---|---|
+| `embeddings_cache.npy` | ESM2 CLS token embeddings (position 0 of the last hidden state) |
+| `embeddings_fullmean_cache.npy` | ESM2 full-sequence mean-pool over all residue positions |
+| `embeddings_cdr_cache.npy` | ESM2 CDR-only mean-pool restricted to IMGT CDR1+CDR2+CDR3 positions |
+| `ab_embeddings_fullmean_cache.npy` | AntiBERTy full-sequence mean-pool (no BOS/EOS offset required) |
+| `ab_embeddings_cdr_cache.npy` | AntiBERTy CDR-only mean-pool restricted to the same IMGT CDR positions |

@@ -1,0 +1,72 @@
+---
+title: "Antibody Sequence Landscape: What This Analysis Does"
+description: "An overview of how Antibody Sequence Landscape embeds VH sequences across species and models, and what the results reveal about PLM structure."
+---
+
+Antibody Sequence Landscape is a reproducible research analysis that asks a focused methodological question: do protein language model (PLM) embeddings capture species-level structure in VH antibody sequences, and if so, is that structure encoded in framework positions, CDR positions, or both? This page explains what the analysis does, how the five embedding conditions are designed, why VH was chosen as the unit of analysis, and what the key findings are.
+
+## What this analysis does
+
+The analysis embeds 750 VH sequences — 250 each from human, mouse, and rat — drawn from the Observed Antibody Space (OAS) paired dataset. Each sequence is embedded under five conditions that span two models and three pooling strategies. Species separation is then measured using cosine silhouette in embedding space, with statistical inference via paired bootstrap confidence intervals (1,000 resamples). UMAP is used only for visualization; all quantitative claims are grounded in silhouette scores computed directly in embedding space.
+
+## The five embedding conditions
+
+Two models and three pooling strategies produce five conditions in total. The conditions are designed so that pairwise contrasts isolate individual factors — pooling strategy vs. position masking, and general-purpose vs. antibody-specific pretraining.
+
+### ESM2-8M (`facebook/esm2_t6_8M_UR50D`)
+
+ESM2-8M is a general-purpose protein language model pretrained on UniRef50. It serves as the baseline model and contributes three of the five conditions:
+
+1. **CLS token** — a single vector taken from the CLS position of the final hidden layer. This is the conventional sentence-level representation in transformer models.
+2. **Full-sequence mean-pool** — the mean of all per-residue hidden states across the full sequence length. Comparing this to CLS isolates the effect of pooling strategy.
+3. **CDR-only mean-pool** — the mean restricted to IMGT CDR1, CDR2, and CDR3 positions, identified using `abnumber`. Comparing this to full-mean isolates the effect of position masking.
+
+### AntiBERTy
+
+AntiBERTy is an antibody-specific language model pretrained on OAS paired data — the same source as this analysis panel. It contributes two conditions:
+
+4. **Full-sequence mean-pool** — mean over all residue positions. No BOS/EOS offset is needed because AntiBERTy's `embed()` method returns per-residue tensors without special tokens.
+5. **CDR-only mean-pool** — mean restricted to the same IMGT CDR positions used in condition 3. Comparing conditions 4 and 5 tests whether masking behavior differs between a general-purpose and an antibody-specific model.
+
+Conditions 2 and 3 isolate the pooling-vs-masking tradeoff within ESM2. Conditions 3 and 5 compare CDR masking behavior across models.
+
+## Why VH only
+
+Both VH and VL sequences are fetched from OAS, but only VH is embedded and analyzed. VH encodes all three CDRs — CDR1, CDR2, and CDR3 — and CDR3 is the primary determinant of binding specificity. CDR3 is formed entirely by VH V-D-J recombination, which generates the bulk of inter-species diversity signal. VL was fetched but is not analyzed here; VL diversity would be a natural extension.
+
+## Key question
+
+The central question is whether PLM embeddings separate human, mouse, and rat VH sequences in embedding space, and whether that separation is driven by framework residues, CDR residues, or both. The answer differs sharply between models.
+
+## Key findings
+
+For ESM2, the CLS token produces zero species separation (silhouette = 0.000; 95% CI spans zero). Switching to full-sequence mean-pooling recovers +0.056 silhouette points (CI excludes zero). CDR-only masking on top of mean-pooling adds nothing — the effect CI spans zero, meaning the gain is entirely attributable to pooling strategy, not position selection.
+
+AntiBERTy outperforms ESM2 by +0.268 silhouette points (CI excludes zero). Unlike ESM2, AntiBERTy encodes inter-species signal in framework positions: CDR masking slightly *hurts* AntiBERTy performance (−0.012, CI excludes zero), because removing framework positions removes discriminative signal.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Antibody embeddings" icon="dna" href="/concepts/antibody-embeddings">
+    How PLM embeddings work and what pooling strategies capture.
+  </Card>
+  <Card title="Data and species" icon="flask" href="/concepts/data-and-species">
+    OAS paired sequences, species composition, and V-gene family distributions.
+  </Card>
+  <Card title="Embedding conditions" icon="layer-group" href="/concepts/embedding-conditions">
+    Detailed breakdown of all five conditions and the contrasts they enable.
+  </Card>
+  <Card title="Results" icon="chart-bar" href="/analysis/results">
+    Silhouette scores, bootstrap confidence intervals, and pairwise contrasts.
+  </Card>
+</CardGroup>
+
+## What comes next
+
+The embeddings produced by this analysis are used as features in a follow-on project that predicts antibody developability from sequence. That project uses publicly available biophysical assay data and evaluates predictions by Spearman correlation across cross-validation folds.
+
+## References
+
+- Olsen et al. (2022). [Observed Antibody Space: A diverse database of cleaned, annotated, and translated unpaired and paired antibody sequences.](https://doi.org/10.1093/protein/gzac009) *Protein Engineering, Design and Selection.*
+- Lin et al. (2023). [Evolutionary-scale prediction of atomic-level protein structure with a language model.](https://doi.org/10.1126/science.ade2574) *Science.*
+- Ruffolo et al. (2021). [Deciphering antibody affinity maturation with language models and weakly supervised learning.](https://arxiv.org/abs/2112.07782) *arXiv.*

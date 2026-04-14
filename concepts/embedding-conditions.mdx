@@ -1,0 +1,166 @@
+---
+title: "Five Embedding Conditions Compared in This Analysis"
+description: "The five embedding conditions across ESM2 and AntiBERTy: what each computes, its cache file, silhouette result, and what each pairwise contrast isolates."
+---
+
+This analysis evaluates five embedding conditions to disentangle two independent variables: which model generates the embeddings (ESM2 versus AntiBERTy), and which pooling strategy is applied (CLS token, full-sequence mean-pool, or CDR-only mean-pool). By holding one variable fixed while changing the other, each pairwise contrast answers a specific experimental question about what drives species separation in embedding space.
+
+<Tabs>
+  <Tab title="ESM2 (conditions 1–3)">
+    ESM2 conditions are computed in `notebook.ipynb` using `facebook/esm2_t6_8M_UR50D`. The model is loaded once via `precompute_esm2()`, which produces all three caches in a single forward-pass loop to avoid loading the model three times.
+
+    ```python
+    def precompute_esm2(
+        sequences: list[str],
+        cdr_indices_list: list[list[int]],
+        batch_size: int = 16,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        ...
+    ```
+
+    **Parameters:**
+
+    - `sequences` — list of VH amino acid strings
+    - `cdr_indices_list` — per-sequence list of 0-based residue indices in CDR1+CDR2+CDR3
+    - `batch_size` — number of sequences per forward pass (default 16; reduce if RAM is limited)
+
+    **Returns:** a tuple of three arrays `(cls_emb, fullmean_emb, cdr_emb)`, each shape `(n, hidden_dim)`.
+
+    ---
+
+    ### Condition 1 — CLS token
+
+    Extracts the hidden state at position 0 of `last_hidden_state`, which corresponds to the ESM2 BOS token. This is the standard BERT-style sequence representation: the model is expected to aggregate global context into the CLS position through self-attention.
+
+    **Cache file:** `embeddings_cache.npy`
+
+    **Silhouette result:** 0.000 (95% CI spans zero — no species separation)
+
+    ---
+
+    ### Condition 2 — Full-sequence mean-pool
+
+    Averages hidden states across all residue positions. Because ESM2 prepends a BOS token, the all-indices list passed to `get_cdr_embeddings()` is `[0, 1, ..., L-1]` and the `+1` BOS offset inside the function maps these to token positions `[1, 2, ..., L]`.
+
+    **Cache file:** `embeddings_fullmean_cache.npy`
+
+    **Silhouette result:** 0.054 (95% CI [0.043, 0.073])
+
+    ---
+
+    ### Condition 3 — CDR-only mean-pool
+
+    Averages hidden states restricted to IMGT CDR1+CDR2+CDR3 positions, identified per-sequence by `cdr_indices()` from `src/features.py`. Inside `get_cdr_embeddings()`, each CDR index is shifted by `+1` before indexing into the hidden state tensor to account for the BOS token.
+
+    **Cache file:** `embeddings_cdr_cache.npy`
+
+    **Silhouette result:** 0.054 (95% CI [0.043, 0.071])
+  </Tab>
+  <Tab title="AntiBERTy (conditions 4–5)">
+    AntiBERTy conditions are computed in `notebook_antiberty.ipynb` (run after `notebook.ipynb`). The `get_antiberty_embeddings()` function wraps `AntiBERTyRunner.embed()`, which returns hidden states with no BOS or EOS tokens — indices map directly to residue positions.
+
+    ```python
+    def get_antiberty_embeddings(
+        sequences: list[str],
+        cdr_indices_list: list[list[int]] | None = None,
+        batch_size: int = 16,
+    ) -> np.ndarray:
+        ...
+    ```
+
+    **Parameters:**
+
+    - `sequences` — list of VH amino acid strings
+    - `cdr_indices_list` — per-sequence CDR indices; pass `None` for full-sequence mean-pool
+    - `batch_size` — number of sequences per batch (default 16)
+
+    **Returns:** array of shape `(n, hidden_dim)`, dtype `float32`.
+
+    ---
+
+    ### Condition 4 — Full-sequence mean-pool
+
+    Averages all per-residue hidden states. Because AntiBERTy does not insert BOS/EOS tokens, `cdr_indices_list=None` and the mean is taken directly over `h_np.mean(axis=0)`.
+
+    **Cache file:** `ab_embeddings_fullmean_cache.npy`
+
+    **Silhouette result:** 0.323 (95% CI [0.309, 0.340])
+
+    ---
+
+    ### Condition 5 — CDR-only mean-pool
+
+    Averages hidden states at IMGT CDR positions. Indices from `cdr_indices()` are used directly with no offset.
+
+    **Cache file:** `ab_embeddings_cdr_cache.npy`
+
+    **Silhouette result:** 0.310 (95% CI [0.298, 0.327])
+  </Tab>
+</Tabs>
+
+## What each pairwise contrast isolates
+
+Each pair of conditions is designed to change exactly one variable, allowing you to attribute any silhouette difference to that variable alone.
+
+### Conditions 2 vs 3 — pooling strategy vs CDR masking (ESM2)
+
+Both use ESM2 full-mean pooling as the baseline (condition 2) versus mean-pooling restricted to CDR positions (condition 3). The model is identical; only the set of positions included in the mean changes.
+
+**Result:** Δ = −0.000 (95% CI [−0.018, +0.018], includes zero). CDR masking has no detectable effect for ESM2. The gain from switching from CLS to mean-pool is entirely due to the pooling strategy, not position selection.
+
+### Conditions 3 vs 5 — masking behavior, general-purpose vs antibody-specific model
+
+Both conditions apply CDR-only mean-pooling. The variable is the model: ESM2 (condition 3) versus AntiBERTy (condition 5).
+
+**Result:** AntiBERTy CDR-only scores 0.310 versus ESM2 CDR-only at 0.054. The large gap reflects the difference between a model pre-trained on all proteins (ESM2) and one pre-trained specifically on antibody sequences (AntiBERTy). Under AntiBERTy, CDR masking slightly *hurts* compared to full-mean (−0.012, CI excludes zero), because framework positions encode inter-species information under antibody-specific pre-training — a signal that CDR masking discards.
+
+### Conditions 2 vs 4 — model effect at full-sequence mean-pool
+
+Both conditions use full-sequence mean-pooling. The variable is the model: ESM2 (condition 2) versus AntiBERTy (condition 4).
+
+**Result:** Δ = +0.268 (95% CI [+0.249, +0.286], excludes zero). This is the headline model effect — AntiBERTy's antibody-specific pre-training produces dramatically better species separation than ESM2's general-purpose pre-training under the same pooling strategy.
+
+## Pre-computing all caches
+
+On machines with less than approximately 16 GB RAM, running inference inside a notebook will crash the kernel. Pre-generate all five cache files from the terminal before opening any notebook:
+
+```bash
+# ESM2 — all three conditions in one pass
+python3 -c "
+import numpy as np
+from src.data import fetch_paired_sequences
+from src.features import cdr_indices
+from src.embed import precompute_esm2
+
+df = fetch_paired_sequences(n=750, species=('human', 'mouse', 'rat'))
+cdr_idx = [cdr_indices(s) for s in df['sequence_vh']]
+
+emb_cls, emb_fm, emb_cdr = precompute_esm2(df['sequence_vh'].tolist(), cdr_idx, batch_size=16)
+np.save('embeddings_cache.npy', emb_cls)
+np.save('embeddings_fullmean_cache.npy', emb_fm)
+np.save('embeddings_cdr_cache.npy', emb_cdr)
+"
+
+# AntiBERTy — full-mean and CDR-only
+python3 -c "
+import numpy as np
+from src.data import fetch_paired_sequences
+from src.features import cdr_indices
+from src.embed import get_antiberty_embeddings
+
+df = fetch_paired_sequences(n=750, species=('human', 'mouse', 'rat'))
+cdr_idx = [cdr_indices(s) for s in df['sequence_vh']]
+
+emb_fm = get_antiberty_embeddings(df['sequence_vh'].tolist(), batch_size=16)
+np.save('ab_embeddings_fullmean_cache.npy', emb_fm)
+
+emb_cdr = get_antiberty_embeddings(df['sequence_vh'].tolist(), cdr_idx, batch_size=16)
+np.save('ab_embeddings_cdr_cache.npy', emb_cdr)
+"
+```
+
+Once all five `.npy` files exist, the notebooks load from cache and skip recomputation automatically.
+
+<Info>
+CDR indices are extracted using IMGT numbering via `abnumber`. HMMER must be installed before `abnumber` is importable at runtime. The provided `environment.yml` installs `hmmer=3.4` via bioconda before any pip dependencies — use `conda env create -f environment.yml` rather than installing via pip alone.
+</Info>

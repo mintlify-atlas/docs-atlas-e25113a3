@@ -1,0 +1,213 @@
+---
+title: "src/stats.py: Bootstrap and Permutation Statistics"
+description: "Compute bootstrap confidence intervals and permutation p-values for cosine-distance silhouette scores across multiple embedding conditions simultaneously."
+---
+
+The `stats` module provides three statistical functions for evaluating how well antibody embeddings separate sequences by species or V-gene family. All functions use cosine distance as the metric for `sklearn.metrics.silhouette_score`. The paired bootstrap design — where the same resampled indices are applied to every embedding condition in a single iteration — ensures that confidence intervals are directly comparable across conditions without inflating variance.
+
+## Full source
+
+```python
+import numpy as np
+from sklearn.metrics import silhouette_score
+
+
+def permutation_test(X, labels, n=1000, seed=42):
+    rng = np.random.default_rng(seed)
+    obs = silhouette_score(X, labels, metric="cosine")
+    null = np.fromiter(
+        (silhouette_score(X, rng.permutation(labels), metric="cosine") for _ in range(n)),
+        dtype=float, count=n,
+    )
+    return obs, (null >= obs).mean()
+
+
+def paired_bootstrap(Xs, labels, n=1000, seed=0):
+    rng = np.random.default_rng(seed)
+    n_samp = len(labels)
+    scores = {k: [] for k in Xs}
+    for _ in range(n):
+        idx = rng.integers(0, n_samp, size=n_samp)
+        if len(np.unique(labels[idx])) < 2:
+            continue
+        for k, X in Xs.items():
+            scores[k].append(silhouette_score(X[idx], labels[idx], metric="cosine"))
+    return {k: np.array(v) for k, v in scores.items()}
+
+
+def dual_bootstrap(Xs, species_labels, vfam_mask, vfam_labels, n=1000, seed=0):
+    rng = np.random.default_rng(seed)
+    n_samp = len(species_labels)
+    full_vfam = np.full(n_samp, -1, dtype=vfam_labels.dtype)
+    full_vfam[vfam_mask] = vfam_labels
+    scores = {k: {"species": [], "vgene": []} for k in Xs}
+    for _ in range(n):
+        idx = rng.integers(0, n_samp, size=n_samp)
+        if len(np.unique(species_labels[idx])) < 2:
+            continue
+        vmask_idx = full_vfam[idx] >= 0
+        vfam_sub = full_vfam[idx][vmask_idx]
+        if len(np.unique(vfam_sub)) < 2:
+            continue
+        _, vfam_reenc = np.unique(vfam_sub, return_inverse=True)
+        for k, X in Xs.items():
+            scores[k]["species"].append(
+                silhouette_score(X[idx], species_labels[idx], metric="cosine")
+            )
+            scores[k]["vgene"].append(
+                silhouette_score(X[idx][vmask_idx], vfam_reenc, metric="cosine")
+            )
+    return {k: {lbl: np.array(v) for lbl, v in d.items()} for k, d in scores.items()}
+```
+
+---
+
+## `paired_bootstrap`
+
+```python
+def paired_bootstrap(Xs, labels, n=1000, seed=0):
+```
+
+Draws `n` bootstrap resamples and computes the silhouette score for every
+embedding condition in `Xs` using the **same** resampled indices per iteration.
+
+### Parameters
+
+<ParamField path="Xs" type="dict[str, np.ndarray]" required>
+  Mapping of condition name to embedding matrix. Each value must have shape
+  `(N, D)` where `N` equals `len(labels)`.
+</ParamField>
+
+<ParamField path="labels" type="np.ndarray" required>
+  Integer or string species labels of shape `(N,)`.
+</ParamField>
+
+<ParamField path="n" type="int" default="1000">
+  Number of bootstrap resamples to draw.
+</ParamField>
+
+<ParamField path="seed" type="int" default="0">
+  Seed for the NumPy default RNG, ensuring reproducibility.
+</ParamField>
+
+### Returns
+
+`dict[str, np.ndarray]` — each key is a condition name from `Xs`; each value
+is a 1-D array of silhouette scores. The array length may be less than `n` if
+any resample produces fewer than two unique class labels (those iterations are
+silently skipped).
+
+<Info>
+  Because the same `idx` array is applied to all conditions within each
+  iteration, the resulting score arrays are directly paired. You can compute
+  per-condition differences (e.g. CDR minus CLS) on a resample-by-resample
+  basis for valid pairwise contrasts.
+</Info>
+
+### Usage example
+
+```python
+import numpy as np
+from src.stats import paired_bootstrap
+
+# Assume emb_cls, emb_fm, emb_cdr are (750, D) float32 arrays
+# labels is a (750,) integer array: 0=human, 1=mouse, 2=rat
+Xs = {"cls": emb_cls, "fullmean": emb_fm, "cdr": emb_cdr}
+scores = paired_bootstrap(Xs, labels, n=1000, seed=0)
+
+for name, s in scores.items():
+    lo, hi = np.percentile(s, [2.5, 97.5])
+    print(f"{name}: mean={s.mean():.3f}, 95% CI=[{lo:.3f}, {hi:.3f}]")
+```
+
+---
+
+## `permutation_test`
+
+```python
+def permutation_test(X, labels, n=1000, seed=42):
+```
+
+Computes an observed silhouette score and estimates a p-value by comparing it
+against a null distribution of scores obtained by randomly permuting the labels
+`n` times.
+
+### Parameters
+
+<ParamField path="X" type="np.ndarray" required>
+  Embedding matrix of shape `(N, D)`.
+</ParamField>
+
+<ParamField path="labels" type="np.ndarray" required>
+  Species labels of shape `(N,)`.
+</ParamField>
+
+<ParamField path="n" type="int" default="1000">
+  Number of label permutations.
+</ParamField>
+
+<ParamField path="seed" type="int" default="42">
+  RNG seed.
+</ParamField>
+
+### Returns
+
+`tuple[float, float]` — `(observed_silhouette, p_value)` where `p_value` is
+the fraction of null scores greater than or equal to the observed score.
+
+<Warning>
+  The permutation null distribution is centered slightly below zero. This means
+  p &lt; 0.001 can be reported even when the bootstrap 95% CI spans zero (as
+  observed with the CLS token condition). Always treat the bootstrap confidence
+  interval as the primary criterion for practical significance; use the
+  permutation p-value as a supplementary check only.
+</Warning>
+
+---
+
+## `dual_bootstrap`
+
+```python
+def dual_bootstrap(Xs, species_labels, vfam_mask, vfam_labels, n=1000, seed=0):
+```
+
+Runs a paired bootstrap that computes silhouette scores for **both** species
+separation and V-gene family separation simultaneously, using the same resampled
+indices per iteration. This lets you confirm that species signal exceeds V-gene
+background in a single coherent comparison.
+
+### Parameters
+
+<ParamField path="Xs" type="dict[str, np.ndarray]" required>
+  Mapping of condition name to embedding matrix, shape `(N, D)`.
+</ParamField>
+
+<ParamField path="species_labels" type="np.ndarray" required>
+  Species labels of shape `(N,)`.
+</ParamField>
+
+<ParamField path="vfam_mask" type="np.ndarray" required>
+  Boolean mask of shape `(N,)` that is `True` for sequences with a valid
+  V-gene family call. Sequences where the mask is `False` are excluded from
+  the V-gene silhouette computation.
+</ParamField>
+
+<ParamField path="vfam_labels" type="np.ndarray" required>
+  V-gene family labels for the `vfam_mask == True` subset, shape
+  `(vfam_mask.sum(),)`.
+</ParamField>
+
+<ParamField path="n" type="int" default="1000">
+  Number of bootstrap resamples.
+</ParamField>
+
+<ParamField path="seed" type="int" default="0">
+  RNG seed.
+</ParamField>
+
+### Returns
+
+Nested `dict` with structure `{condition: {"species": np.ndarray, "vgene": np.ndarray}}`.
+Each inner array contains per-resample silhouette scores. Iterations where the
+resampled species or V-gene subset contains fewer than two unique labels are
+skipped for both criteria simultaneously.

@@ -1,0 +1,74 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "Antibody Sequence Landscape",
+  "projectDescription": "Embedding-space analysis of VH antibody diversity across human, mouse, and rat using ESM2 and AntiBERTy protein language models, with paired bootstrap statistics to evaluate pooling strategies and CDR masking effects.",
+  "theme": "palm",
+  "primaryColor": "#f6be31",
+  "lightColor": "#7c531c",
+  "darkColor": "#040404",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "setup"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/antibody-embeddings",
+              "concepts/data-and-species",
+              "concepts/embedding-conditions"
+            ]
+          },
+          {
+            "group": "Analysis",
+            "pages": [
+              "analysis/running-the-analysis",
+              "analysis/statistical-methods",
+              "analysis/results"
+            ]
+          },
+          {
+            "group": "Code Reference",
+            "pages": [
+              "reference/data",
+              "reference/embed",
+              "reference/features",
+              "reference/stats"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "ESM2 embeddings with three pooling strategies: CLS token, full-sequence mean-pool, and CDR-only mean-pool",
+    "AntiBERTy antibody-specific embeddings with full-sequence and CDR-only mean-pool",
+    "Paired bootstrap inference (1,000 resamples) for rigorous confidence intervals on silhouette scores",
+    "UMAP 2D visualization of embedding space colored by species, V-gene family, and CDR3 length",
+    "Permutation test for null hypothesis testing of species separation",
+    "Dual bootstrap control comparing species vs V-gene family separation",
+    "Cross-model comparison: AntiBERTy vs ESM2-8M performance",
+    "Streaming data pipeline from OAS (Observed Antibody Space) with local CSV cache"
+  ],
+  "publicApiSurface": [
+    "src/data.py: fetch_paired_sequences(n, species) -> pd.DataFrame",
+    "src/embed.py: get_embeddings(sequences, batch_size, model_bundle, model_name) -> np.ndarray",
+    "src/embed.py: get_cdr_embeddings(sequences, cdr_indices_list, batch_size, model_bundle, model_name) -> np.ndarray",
+    "src/embed.py: get_antiberty_embeddings(sequences, cdr_indices_list, batch_size) -> np.ndarray",
+    "src/embed.py: precompute_esm2(sequences, cdr_indices_list, batch_size) -> tuple[np.ndarray, np.ndarray, np.ndarray]",
+    "src/features.py: cdr_indices(vh) -> list[int]",
+    "src/features.py: cdr3_length(vh) -> int",
+    "src/features.py: aa_composition(vh) -> np.ndarray",
+    "src/features.py: vgene_family(v_gene) -> str",
+    "src/stats.py: paired_bootstrap(Xs, labels, n, seed) -> dict[str, np.ndarray]",
+    "src/stats.py: permutation_test(X, labels, n, seed) -> tuple[float, float]",
+    "src/stats.py: dual_bootstrap(Xs, species_labels, vfam_mask, vfam_labels, n, seed) -> dict"
+  ]
+}

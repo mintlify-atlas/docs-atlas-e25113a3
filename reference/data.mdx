@@ -1,0 +1,88 @@
+---
+title: "data.py: Fetch and Cache Paired OAS Antibody Sequences"
+description: "Fetch paired VH/VL antibody sequences from the Observed Antibody Space database, validate amino acid content, and cache results locally as a CSV file."
+---
+
+The `data` module retrieves paired heavy/light chain antibody sequences from the [Observed Antibody Space (OAS)](http://opig.stats.ox.ac.uk/webapps/oas/) bulk download archive. On the first call it streams gzip-compressed CSV units directly from OAS URLs listed in `bulk_download.sh`, filters by species, validates that each sequence contains only the 20 standard amino acids, and writes the final dataset to `data/sequences.csv`. Every subsequent call returns the cached file immediately, so network access is only required once.
+
+## `fetch_paired_sequences`
+
+```python
+def fetch_paired_sequences(
+    n: int = 750,
+    species: tuple = ("human", "mouse", "rat"),
+) -> pd.DataFrame:
+```
+
+Fetches `n` paired antibody sequences stratified evenly across `species`. If `data/sequences.csv` already exists, it is returned without any network requests.
+
+### Parameters
+
+<ParamField path="n" type="int" default="750">
+  Total number of sequences to fetch. Sequences are split evenly across the
+  requested species (i.e. `n // len(species)` per species).
+</ParamField>
+
+<ParamField path="species" type="tuple" default='("human", "mouse", "rat")'>
+  Species to include. Each entry is matched case-insensitively against the
+  `Species` metadata field in each OAS data unit. Any species with fewer
+  available sequences than the per-species quota will emit a `UserWarning`.
+</ParamField>
+
+### Returns
+
+A `pd.DataFrame` with the following columns:
+
+<ResponseField name="sequence_id" type="string">
+  OAS heavy-chain sequence identifier (`sequence_id_heavy` in the raw OAS schema).
+</ResponseField>
+
+<ResponseField name="sequence_vh" type="string">
+  IMGT-aligned VH amino acid sequence. Contains only characters from the
+  20-letter standard amino acid alphabet.
+</ResponseField>
+
+<ResponseField name="sequence_vl" type="string">
+  IMGT-aligned VL amino acid sequence, validated with the same alphabet filter
+  as `sequence_vh`.
+</ResponseField>
+
+<ResponseField name="v_gene" type="string">
+  Heavy-chain V-gene call (e.g. `IGHV1-3*01`), sourced from `v_call_heavy`.
+</ResponseField>
+
+<ResponseField name="j_gene" type="string">
+  Heavy-chain J-gene call (e.g. `IGHJ4*02`), sourced from `j_call_heavy`.
+</ResponseField>
+
+<ResponseField name="species" type="string">
+  Species label assigned during fetching — one of the values passed in the
+  `species` parameter, in lowercase.
+</ResponseField>
+
+### Behavior
+
+When the cache is absent, the function:
+
+1. Parses all `wget` URLs from `bulk_download.sh`.
+2. Shuffles URLs with a fixed seed (42) for reproducibility.
+3. Streams the first 8 KB of each gzip unit to read the metadata row and identify the species without downloading the full file.
+4. Skips units that do not match a requested species or whose species bucket is already full.
+5. Filters rows to those where both `sequence_vh` and `sequence_vl` match `^[ACDEFGHIKLMNPQRSTVWY]+$`.
+6. Samples up to the remaining per-species quota and appends rows to the in-memory bucket.
+7. Writes the final DataFrame to `data/sequences.csv` and returns it.
+
+### Usage example
+
+```python
+from src.data import fetch_paired_sequences
+
+df = fetch_paired_sequences(n=750, species=("human", "mouse", "rat"))
+print(df.head())
+print(df["species"].value_counts())
+```
+
+<Note>
+  Delete `data/sequences.csv` to force a fresh download from OAS. Network
+  access is only required when the cache file is absent.
+</Note>

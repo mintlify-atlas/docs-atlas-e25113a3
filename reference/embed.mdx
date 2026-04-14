@@ -1,0 +1,223 @@
+---
+title: "embed.py: ESM2 and AntiBERTy Sequence Embedding Functions"
+description: "Generate embeddings from ESM2 (CLS, full-mean, CDR-only) and AntiBERTy. Includes precompute_esm2 for single-pass generation of all three ESM2 conditions."
+---
+
+The `embed` module converts amino acid sequences into dense vector representations using two pre-trained protein language models: [ESM2](https://github.com/facebookresearch/esm) (`facebook/esm2_t6_8M_UR50D` by default) and [AntiBERTy](https://github.com/jeffreyruffolo/AntiBERTy). Three ESM2 pooling strategies are supported — CLS token, full-sequence mean-pool, and CDR mean-pool — and the `precompute_esm2` function runs all three in a single model-load pass to minimise memory overhead.
+
+## `get_embeddings`
+
+```python
+def get_embeddings(
+    sequences: list[str],
+    batch_size: int = 16,
+    model_bundle: tuple | None = None,
+    model_name: str = "facebook/esm2_t6_8M_UR50D",
+) -> np.ndarray:
+```
+
+Encodes sequences using the ESM2 CLS token (position 0 of `last_hidden_state`).
+
+### Parameters
+
+<ParamField path="sequences" type="list[str]" required>
+  Amino acid sequences to embed. Each string must use the 20-letter standard
+  alphabet and should not exceed 256 residues (sequences are truncated to this
+  length during tokenisation).
+</ParamField>
+
+<ParamField path="batch_size" type="int" default="16">
+  Number of sequences per forward pass. Reduce this value if you run out of
+  GPU/CPU memory.
+</ParamField>
+
+<ParamField path="model_bundle" type="tuple | None">
+  A `(tokenizer, model)` tuple returned by the internal `_load_model` helper.
+  Pass a pre-loaded bundle to avoid reloading weights across multiple calls.
+  When `None`, the model is loaded and unloaded automatically.
+</ParamField>
+
+<ParamField path="model_name" type="str" default='"facebook/esm2_t6_8M_UR50D"'>
+  Hugging Face model identifier. Any ESM2 checkpoint available on the Hub is
+  accepted.
+</ParamField>
+
+### Returns
+
+`np.ndarray` of shape `(N, hidden_size)`, dtype `float32`. Each row is the CLS
+token vector for the corresponding input sequence.
+
+---
+
+## `get_cdr_embeddings`
+
+```python
+def get_cdr_embeddings(
+    sequences: list[str],
+    cdr_indices_list: list[list[int]],
+    batch_size: int = 16,
+    model_bundle: tuple | None = None,
+    model_name: str = "facebook/esm2_t6_8M_UR50D",
+) -> np.ndarray:
+```
+
+Encodes sequences by mean-pooling the ESM2 hidden states at a specified set of
+positions. Used for CDR-only pooling and full-sequence mean-pooling.
+
+### Parameters
+
+<ParamField path="sequences" type="list[str]" required>
+  Amino acid sequences to embed.
+</ParamField>
+
+<ParamField path="cdr_indices_list" type="list[list[int]]" required>
+  Per-sequence lists of 0-indexed residue positions to pool over. The function
+  applies a `+1` offset internally to account for the ESM2 BOS token, so you
+  should pass raw `cdr_indices` output without any pre-adjustment.
+</ParamField>
+
+<ParamField path="batch_size" type="int" default="16">
+  Number of sequences per forward pass.
+</ParamField>
+
+<ParamField path="model_bundle" type="tuple | None">
+  Pre-loaded `(tokenizer, model)` bundle. See `get_embeddings` for details.
+</ParamField>
+
+<ParamField path="model_name" type="str" default='"facebook/esm2_t6_8M_UR50D"'>
+  Hugging Face model identifier.
+</ParamField>
+
+### Returns
+
+`np.ndarray` of shape `(N, hidden_size)`, dtype `float32`. Sequences with an
+empty or out-of-bounds index list produce a zero vector.
+
+<Tip>
+  To get full-sequence mean-pooling, pass
+  `[list(range(len(s))) for s in sequences]` as `cdr_indices_list`. This is
+  exactly what `precompute_esm2` does for its `fullmean` condition.
+</Tip>
+
+---
+
+## `get_antiberty_embeddings`
+
+```python
+def get_antiberty_embeddings(
+    sequences: list[str],
+    cdr_indices_list: list[list[int]] | None = None,
+    batch_size: int = 16,
+) -> np.ndarray:
+```
+
+Encodes sequences with AntiBERTy and optionally mean-pools over specified
+residue positions.
+
+### Parameters
+
+<ParamField path="sequences" type="list[str]" required>
+  Amino acid sequences to embed.
+</ParamField>
+
+<ParamField path="cdr_indices_list" type="list[list[int]] | None">
+  Per-sequence 0-indexed residue positions to pool over. AntiBERTy does not
+  prepend a BOS token, so no offset is applied. When `None`, the function
+  returns a full-sequence mean-pool over all residues.
+</ParamField>
+
+<ParamField path="batch_size" type="int" default="16">
+  Number of sequences per forward pass.
+</ParamField>
+
+### Returns
+
+`np.ndarray` of shape `(N, hidden_size)`, dtype `float32`.
+
+<Note>
+  Unlike the ESM2 functions, AntiBERTy hidden states do not include BOS or EOS
+  tokens, so `cdr_indices_list` values are used directly without any offset.
+</Note>
+
+---
+
+## `precompute_esm2`
+
+```python
+def precompute_esm2(
+    sequences: list[str],
+    cdr_indices_list: list[list[int]],
+    batch_size: int = 16,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+```
+
+Computes all three ESM2 embedding conditions in a single model-load pass,
+returning `(cls_emb, fullmean_emb, cdr_emb)`.
+
+### Parameters
+
+<ParamField path="sequences" type="list[str]" required>
+  Amino acid sequences to embed.
+</ParamField>
+
+<ParamField path="cdr_indices_list" type="list[list[int]]" required>
+  Per-sequence CDR residue positions (0-indexed, from `cdr_indices`).
+</ParamField>
+
+<ParamField path="batch_size" type="int" default="16">
+  Number of sequences per forward pass.
+</ParamField>
+
+### Returns
+
+A tuple of three `np.ndarray` arrays, each of shape `(N, hidden_size)`, dtype
+`float32`:
+
+<ResponseField name="cls_emb" type="np.ndarray">
+  CLS token embeddings (position 0 of `last_hidden_state`).
+</ResponseField>
+
+<ResponseField name="fullmean_emb" type="np.ndarray">
+  Full-sequence mean-pool embeddings (all residue positions).
+</ResponseField>
+
+<ResponseField name="cdr_emb" type="np.ndarray">
+  CDR mean-pool embeddings (positions from `cdr_indices_list`).
+</ResponseField>
+
+The function loads ESM2 once and calls `get_embeddings` and `get_cdr_embeddings`
+with the shared `model_bundle`, then frees the model:
+
+```python
+def precompute_esm2(
+    sequences: list[str],
+    cdr_indices_list: list[list[int]],
+    batch_size: int = 16,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    tok, model = _load_model(_DEFAULT_MODEL)
+    bundle = (tok, model)
+    all_idx = [list(range(len(s))) for s in sequences]
+    cls_emb = get_embeddings(sequences, batch_size=batch_size, model_bundle=bundle)
+    fullmean_emb = get_cdr_embeddings(sequences, all_idx, batch_size=batch_size, model_bundle=bundle)
+    cdr_emb = get_cdr_embeddings(sequences, cdr_indices_list, batch_size=batch_size, model_bundle=bundle)
+    del model, tok, bundle
+    gc.collect()
+    return cls_emb, fullmean_emb, cdr_emb
+```
+
+### Usage example
+
+```python
+import numpy as np
+from src.data import fetch_paired_sequences
+from src.features import cdr_indices
+from src.embed import precompute_esm2
+
+df = fetch_paired_sequences(n=750, species=("human", "mouse", "rat"))
+cdr_idx = [cdr_indices(s) for s in df["sequence_vh"]]
+
+emb_cls, emb_fm, emb_cdr = precompute_esm2(df["sequence_vh"].tolist(), cdr_idx, batch_size=16)
+np.save("embeddings_cache.npy", emb_cls)
+np.save("embeddings_fullmean_cache.npy", emb_fm)
+np.save("embeddings_cdr_cache.npy", emb_cdr)
+```
